@@ -1,0 +1,98 @@
+# This compose file will boot a elk cluster.
+#   elasticsearch will listen on local 9200, and  use /opt/data/elasticsearch for storage.
+#   es node can scale out.
+#   logstash will liten on local udp 2055.
+#   kibana will liten on local 5601.
+#   After startup, import the visualization in the kibana-exports.json file.
+# https://github.com/yeasy/docker-compose-files
+
+# scale this with docker-compose scale es=3
+version: '2'
+
+services:
+    es:
+      image: elasticsearch:5.5.1
+      environment:
+        - cluster.name=home-cluster
+        - bootstrap.memory_lock=true
+        - "ES_JAVA_OPTS: -Xmx512m -Xms512m"
+        - "discovery.zen.ping.unicast.hosts=elasticsearch"
+      ulimits:
+        memlock:
+            soft: -1
+            hard: -1
+      mem_limit: 1g
+      volumes:
+      - esdata:/usr/share/elasticsearch/data
+      - esconfig:/usr/share/elasticsearch/config
+      - eslogs:/usr/share/elasticsearch/logs
+      networks:
+        - metrics
+      expose:
+        - "9200"
+        - "9300"
+
+    #elasticsearch configuration node, should not be scaled
+    #config is under /usr/share/elasticsearch/config
+    #data is under /usr/share/elasticsearch/data
+    elasticsearch:
+      image: elastic-netflow:5.5.1
+      hostname: elasticsearch
+      environment:
+        - cluster.name=home-cluster
+        - bootstrap.memory_lock=true
+        - "ES_JAVA_OPTS: -Xmx512m -Xms512m"
+      ulimits:
+        memlock:
+            soft: -1
+            hard: -1
+      mem_limit: 1g
+      links:
+        - es:es
+      networks:
+        - metrics
+      ports:
+        - "9200:9200"
+      expose:
+        - "9300"
+      volumes:
+        - elasticsearchdata:/usr/share/elasticsearch/data
+      command: sh -c "sleep 15; curl -XPUT es:9200/_template/logstash_netflow5 -d@'/tmp/logstash_netflow5.json';elasticsearch"
+
+    kibana:
+      image: kibana:5.5.1
+      networks:
+        - metrics
+      ports:
+        - "5601:5601"
+      links:
+        - elasticsearch:elasticsearch
+      depends_on:
+        - elasticsearch
+
+    logstash:
+      image: logstash-netflow:5.5.1
+      environment:
+        ES_JAVA_OPTS: "-Xmx256m -Xms256m"
+      networks:
+        - metrics
+      ports:
+        - "2055/udp:2055/udp"
+      links:
+        - elasticsearch:elasticsearch
+      depends_on:
+        - elasticsearch
+      command: logstash -f /etc/logstash/conf.d/
+
+volumes:
+  esdata:
+    driver: local
+  esconfig:
+    driver: local
+  eslogs:
+    driver: local
+  elasticsearchdata:
+    driver: local      
+networks:
+  metrics:
+    driver: bridge
